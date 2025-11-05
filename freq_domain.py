@@ -78,6 +78,8 @@ class FrequencyDomainAnalyzer:
         duration = config.FREQ_DOMAIN['marker_duration'] + 0.2  # Add buffer
         samples = self.receiver.get_samples(duration_seconds=duration)
         
+        logger.debug(f"Got {len(samples)} samples for measurement")
+        
         if len(samples) == 0:
             logger.warning("No samples available for marker tone measurement")
             return None
@@ -121,13 +123,24 @@ class FrequencyDomainAnalyzer:
         else:
             ratio_db = None
         
+        # Detect marker onset times for time delta calculation
+        wwv_onset_ms, wwvh_onset_ms, time_delta_ms = sp.detect_marker_onset_times(
+            audio,
+            wwv_freq=config.FREQ_DOMAIN['wwv_marker_freq'],
+            wwvh_freq=config.FREQ_DOMAIN['wwvh_marker_freq'],
+            bandwidth=config.FREQ_DOMAIN['filter_bandwidth']
+        )
+        
         measurement = {
             'wwv_detected': wwv_detected,
             'wwv_power_db': wwv_power,
             'wwv_goertzel_db': wwv_goertzel_db,
+            'wwv_onset_ms': wwv_onset_ms,
             'wwvh_detected': wwvh_detected,
             'wwvh_power_db': wwvh_power,
             'wwvh_goertzel_db': wwvh_goertzel_db,
+            'wwvh_onset_ms': wwvh_onset_ms,
+            'time_delta_ms': time_delta_ms,
             'ratio_db': ratio_db,
             'num_samples': len(samples),
             'duration': duration,
@@ -162,10 +175,20 @@ class FrequencyDomainAnalyzer:
                 
                 self.measurements.append(measurement)
                 
-                logger.info(f"Marker measurement: "
+                # Build log message
+                log_msg = (f"Marker measurement: "
                           f"WWV={measurement['wwv_power_db']:.1f} dB ({'detected' if measurement['wwv_detected'] else 'absent'}), "
-                          f"WWVH={measurement['wwvh_power_db']:.1f} dB ({'detected' if measurement['wwvh_detected'] else 'absent'}), "
-                          f"Ratio={measurement['ratio_db']:.1f} dB" if measurement['ratio_db'] else "Ratio=N/A")
+                          f"WWVH={measurement['wwvh_power_db']:.1f} dB ({'detected' if measurement['wwvh_detected'] else 'absent'}), ")
+                
+                if measurement['ratio_db']:
+                    log_msg += f"Ratio={measurement['ratio_db']:.1f} dB"
+                else:
+                    log_msg += "Ratio=N/A"
+                
+                if measurement['time_delta_ms'] is not None:
+                    log_msg += f", ΔT={measurement['time_delta_ms']:.2f} ms"
+                
+                logger.info(log_msg)
                 
                 return measurement
         

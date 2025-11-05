@@ -97,10 +97,14 @@ class RTPReceiver:
     def _receive_loop(self):
         """Main receiver loop."""
         self.sock.settimeout(1.0)  # 1 second timeout for clean shutdown
+        packet_count = 0
         
         while self.running:
             try:
                 data, addr = self.sock.recvfrom(65536)
+                packet_count += 1
+                if packet_count == 1:
+                    logger.info(f"SSRC {self.ssrc}: First packet received!")
                 self._process_packet(data)
             except socket.timeout:
                 continue
@@ -420,16 +424,31 @@ class MultiFrequencyReceiver:
                     "Ensure radiod is running and has active channels."
                 )
             
-            # All channels should have the same output destination (configured in radiod)
-            # Get the first channel's destination
-            first_channel = next(iter(channels.values()))
+            # Find output destination from one of our expected WWV channels
+            # (since radiod may have multiple multicast groups)
+            multicast_addr = None
+            port = None
             
-            multicast_addr = first_channel.multicast_address
-            port = first_channel.port
+            for name, freq in config.FREQUENCIES.items():
+                ssrc = config.get_ssrc(freq)
+                if ssrc in channels:
+                    ch = channels[ssrc]
+                    if ch.multicast_address and ch.port:
+                        multicast_addr = ch.multicast_address
+                        port = ch.port
+                        logger.debug(f"Using RTP address from WWV channel {name}: {multicast_addr}:{port}")
+                        break
+            
+            # Fallback: use first channel's destination if no WWV channels found
+            if not multicast_addr or not port:
+                first_channel = next(iter(channels.values()))
+                multicast_addr = first_channel.multicast_address
+                port = first_channel.port
+                logger.warning(f"No WWV channels found, using first channel's address")
             
             if not multicast_addr or not port:
                 raise RuntimeError(
-                    f"Channel {first_channel.ssrc} has no output destination. "
+                    f"No channels have RTP output destination. "
                     "Check radiod configuration for 'data' multicast address."
                 )
             

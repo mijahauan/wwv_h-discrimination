@@ -261,3 +261,76 @@ def moving_average(data, window_size):
         return np.mean(data) if len(data) > 0 else 0
     
     return np.convolve(data, np.ones(window_size)/window_size, mode='valid')
+
+
+def detect_marker_onset_times(audio, wwv_freq=1000, wwvh_freq=1200, 
+                               bandwidth=50, sample_rate=config.SAMPLE_RATE):
+    """
+    Detect onset times of WWV and WWVH marker tones.
+    
+    Uses envelope detection on filtered signals to find when each marker
+    starts. This allows calculation of time-of-arrival difference between
+    the two stations.
+    
+    Args:
+        audio: Audio signal samples
+        wwv_freq: WWV marker frequency (Hz)
+        wwvh_freq: WWVH marker frequency (Hz)
+        bandwidth: Filter bandwidth (Hz)
+        sample_rate: Sample rate (Hz)
+        
+    Returns:
+        Tuple of (wwv_onset_ms, wwvh_onset_ms, time_delta_ms)
+        Returns None for onsets if not detected
+    """
+    if len(audio) == 0:
+        return None, None, None
+    
+    # Filter for each marker tone
+    wwv_filtered = bandpass_filter(audio, wwv_freq, bandwidth, sample_rate)
+    wwvh_filtered = bandpass_filter(audio, wwvh_freq, bandwidth, sample_rate)
+    
+    # Compute envelopes (magnitude)
+    wwv_envelope = np.abs(wwv_filtered)
+    wwvh_envelope = np.abs(wwvh_filtered)
+    
+    # Smooth envelopes to reduce noise
+    window_ms = 10  # 10 ms smoothing window
+    window_samples = int(window_ms * sample_rate / 1000)
+    if window_samples > 1:
+        wwv_envelope = np.convolve(wwv_envelope, 
+                                   np.ones(window_samples)/window_samples, 
+                                   mode='same')
+        wwvh_envelope = np.convolve(wwvh_envelope,
+                                    np.ones(window_samples)/window_samples,
+                                    mode='same')
+    
+    # Detect onset as first point exceeding threshold
+    # Use 20% of max amplitude as threshold
+    wwv_threshold = 0.2 * np.max(wwv_envelope)
+    wwvh_threshold = 0.2 * np.max(wwvh_envelope)
+    
+    # Find first crossing
+    wwv_onset_idx = None
+    wwvh_onset_idx = None
+    
+    for i in range(len(wwv_envelope)):
+        if wwv_onset_idx is None and wwv_envelope[i] > wwv_threshold:
+            wwv_onset_idx = i
+        if wwvh_onset_idx is None and wwvh_envelope[i] > wwvh_threshold:
+            wwvh_onset_idx = i
+        if wwv_onset_idx is not None and wwvh_onset_idx is not None:
+            break
+    
+    # Convert to milliseconds
+    wwv_onset_ms = (wwv_onset_idx / sample_rate * 1000) if wwv_onset_idx is not None else None
+    wwvh_onset_ms = (wwvh_onset_idx / sample_rate * 1000) if wwvh_onset_idx is not None else None
+    
+    # Compute time delta (WWV - WWVH)
+    # Positive means WWV arrived first, negative means WWVH arrived first
+    if wwv_onset_ms is not None and wwvh_onset_ms is not None:
+        time_delta_ms = wwv_onset_ms - wwvh_onset_ms
+    else:
+        time_delta_ms = None
+    
+    return wwv_onset_ms, wwvh_onset_ms, time_delta_ms
